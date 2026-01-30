@@ -1,0 +1,52 @@
+[project]
+name = "blog-ueditor-backend"
+version = "1.0.0"
+description = "富文本清洗与离线导出工具后端服务"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+
+# 项目依赖（等同于 package.json 的 dependencies）
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "python-multipart>=0.0.18",
+    "aiofiles>=24.1.0",
+]
+
+# 开发依赖（等同于 devDependencies）
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+# 脚本入口（等同于 package.json 的 scripts，但功能有限）
+[project.scripts]
+start = "uvicorn app:app --host 0.0.0.0 --port 8000"
+
+# ==================== 工具配置 ====================
+
+# Ruff 代码检查配置
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+# Pytest 配置
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+# ==================== 构建系统 ====================
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

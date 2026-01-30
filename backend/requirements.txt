@@ -1,0 +1,15 @@
+# FastAPI 及相关依赖
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# HTTP 客户端 - 用于异步下载图片
+httpx>=0.28.0
+
+# Pydantic - 数据验证
+pydantic>=2.10.0
+
+# Python-multipart - 表单支持
+python-multipart>=0.0.18
+
+# 其他工具
+aiofiles>=24.1.0
