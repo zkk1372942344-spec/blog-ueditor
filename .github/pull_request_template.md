@@ -14,3 +14,7 @@
 
 `@codex 请帮我审查这个 PR`
 
+- [ ] 已在仓库设置中启用 Codex 自动审查（Code review）
+- [ ] 若未自动触发，已手动评论 `@codex` 请求审查
+
+详细说明见：`docs/codex-review-setup.md`
