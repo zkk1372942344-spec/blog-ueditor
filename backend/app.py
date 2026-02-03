@@ -30,6 +30,10 @@ from pydantic import BaseModel, Field
 EXPORT_TEMP_DIR = Path("./export_temp")
 EXPORT_TEMP_DIR.mkdir(exist_ok=True)
 
+# 任务元数据持久化目录（用于多进程/重启恢复）
+TASK_META_DIR = EXPORT_TEMP_DIR / "meta"
+TASK_META_DIR.mkdir(exist_ok=True)
+
 # 静态文件目录（前端构建产物）
 STATIC_DIR = Path("./static")
 
@@ -219,6 +223,61 @@ app.add_middleware(
 def generate_export_id() -> str:
     """生成唯一的导出任务 ID"""
     return f"exp_{uuid.uuid4().hex[:8]}"
+
+
+def save_task_meta(task: ExportTask) -> None:
+    """
+    保存任务元数据到文件（用于多进程/重启恢复）
+
+    Args:
+        task: 导出任务对象
+    """
+    import json
+    meta_file = TASK_META_DIR / f"{task.id}.json"
+    meta_data = {
+        "id": task.id,
+        "status": task.status.value,
+        "created_at": task.created_at.isoformat(),
+        "expires_at": task.expires_at.isoformat(),
+        "mode": task.mode.value,
+        "html": task.html,
+        "options": task.options.model_dump(),
+        "links": task.links.model_dump(by_alias=True),
+        "error_message": task.error_message,
+    }
+    meta_file.write_text(json.dumps(meta_data, ensure_ascii=False), encoding='utf-8')
+
+
+def load_task_meta(task_id: str) -> Optional[dict]:
+    """
+    从文件加载任务元数据
+
+    Args:
+        task_id: 任务 ID
+
+    Returns:
+        任务元数据字典，不存在则返回 None
+    """
+    import json
+    meta_file = TASK_META_DIR / f"{task_id}.json"
+    if not meta_file.exists():
+        return None
+    try:
+        return json.loads(meta_file.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def delete_task_meta(task_id: str) -> None:
+    """
+    删除任务元数据文件
+
+    Args:
+        task_id: 任务 ID
+    """
+    meta_file = TASK_META_DIR / f"{task_id}.json"
+    if meta_file.exists():
+        meta_file.unlink()
 
 
 def extract_image_urls(html: str) -> list[str]:
@@ -718,6 +777,10 @@ async def process_export_task(task_id: str):
         task.status = ExportStatus.FAILED
         task.error_message = str(e)
 
+    finally:
+        # 更新元数据文件（记录最终状态）
+        save_task_meta(task)
+
 
 def cleanup_expired_tasks():
     """清理过期的任务和文件"""
@@ -735,6 +798,8 @@ def cleanup_expired_tasks():
             task_dir = EXPORT_TEMP_DIR / task_id
             if task_dir.exists():
                 shutil.rmtree(task_dir)
+            # 删除元数据文件
+            delete_task_meta(task_id)
 
     # 从内存中移除过期任务
     for task_id in expired_ids:
@@ -948,6 +1013,9 @@ async def create_export(
 
     export_tasks[task_id] = task
 
+    # 持久化任务元数据（用于多进程/重启恢复）
+    save_task_meta(task)
+
     # 记录幂等键与任务 ID 的映射
     if idempotency_key:
         idempotency_records[idempotency_key] = task_id
@@ -978,12 +1046,29 @@ async def get_export_status(request: Request, export_id: str):
     """查询导出任务状态"""
     task = export_tasks.get(export_id)
 
+    # 内存中没有任务，尝试从文件恢复
     if not task:
-        return create_problem_response(
-            request, 404, "Not Found",
-            f"Export task '{export_id}' not found",
-            "https://blog-ueditor.example.com/problems/not-found"
+        meta = load_task_meta(export_id)
+        if not meta:
+            return create_problem_response(
+                request, 404, "Not Found",
+                f"Export task '{export_id}' not found",
+                "https://blog-ueditor.example.com/problems/not-found"
+            )
+        # 从元数据重建任务对象
+        task = ExportTask(
+            id=meta["id"],
+            status=ExportStatus(meta["status"]),
+            created_at=datetime.fromisoformat(meta["created_at"]),
+            expires_at=datetime.fromisoformat(meta["expires_at"]),
+            links=ExportLinks(**meta["links"]),
+            mode=CleanMode(meta["mode"]),
+            html=meta.get("html", ""),
+            options=ExportOptions(**meta.get("options", {})),
+            error_message=meta.get("error_message"),
         )
+        # 重新加载到内存
+        export_tasks[export_id] = task
 
     # 检查是否过期
     if datetime.now(timezone.utc) > task.expires_at:
@@ -1010,12 +1095,29 @@ async def download_archive(request: Request, export_id: str):
     """下载导出的 ZIP 文件"""
     task = export_tasks.get(export_id)
 
+    # 内存中没有任务，尝试从文件恢复
     if not task:
-        return create_problem_response(
-            request, 404, "Not Found",
-            f"Export task '{export_id}' not found",
-            "https://blog-ueditor.example.com/problems/not-found"
+        meta = load_task_meta(export_id)
+        if not meta:
+            return create_problem_response(
+                request, 404, "Not Found",
+                f"Export task '{export_id}' not found",
+                "https://blog-ueditor.example.com/problems/not-found"
+            )
+        # 从元数据重建任务对象
+        task = ExportTask(
+            id=meta["id"],
+            status=ExportStatus(meta["status"]),
+            created_at=datetime.fromisoformat(meta["created_at"]),
+            expires_at=datetime.fromisoformat(meta["expires_at"]),
+            links=ExportLinks(**meta["links"]),
+            mode=CleanMode(meta["mode"]),
+            html=meta.get("html", ""),
+            options=ExportOptions(**meta.get("options", {})),
+            error_message=meta.get("error_message"),
         )
+        # 重新加载到内存
+        export_tasks[export_id] = task
 
     # 检查是否过期
     if datetime.now(timezone.utc) > task.expires_at:
@@ -1278,6 +1380,9 @@ async def delete_export(request: Request, export_id: str):
     task_dir = EXPORT_TEMP_DIR / export_id
     if task_dir.exists():
         shutil.rmtree(task_dir)
+
+    # 删除元数据文件
+    delete_task_meta(export_id)
 
     # 从内存中移除
     del export_tasks[export_id]
